@@ -1,0 +1,296 @@
+/*
+-------------------------------------ARTICLE---------------------------------------------
+-------------------------------------ENTITE----------------------------------------------
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Visiteur } from '../visiteur/visiteur.entity';
+import { Note } from '../note/note.entity';
+
+@Entity()
+export class Article {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  titre: string;
+
+  @Column()
+  contenu: string;
+
+  @ManyToOne(() => Admin, (admin) => admin.articles)
+  auteur: Admin;
+  
+
+  ////NOTE
+  @OneToMany(() => Note, (note) => note.article)
+  notes: Note[];
+
+  @Column({ default: 0 })
+  noteGenerale: number;
+
+  ////LIKES
+  @Column({ default: 0 })
+  likes: number;
+
+
+  ////COMMENTAIRES
+   @OneToMany(() => Commentaire, (commentaire) => commentaire.article)
+   commentaires: Commentaire[]; 
+}
+-------------------------------------SERVICE----------------------------------
+export class ArticleService {
+  constructor(
+    @InjectRepository(Article)
+    private readonly articleRepository: Repository<Article>,
+  ) {}
+  ----------------------------------
+  async likeArticle(idArticle: number): Promise<Article> {
+    const article = await this.articleRepository.findOne(idArticle);
+    if (!article) {
+      throw new NotFoundException('Article non trouvé');
+    }
+
+    article.likes = (article.likes || 0) + 1;
+    return this.articleRepository.save(article);
+    }
+    ----------------------------------
+    async getLikesCount(idArticle: number): Promise<number> {
+    const article = await this.articleRepository.findOne(idArticle);
+    if (!article) {
+      throw new NotFoundException('Article non trouvé');
+    }
+
+    return article.likes || 0;
+  }
+}
+-------------------------------------CONTROLEUR----------------------------------
+@Controller('article')
+export class ArticleController {
+  constructor(private readonly articleService: ArticleService) {}
+   
+
+  -------------------------------------
+  @Post(':id/like')
+  async likeArticle(@Param('id') idArticle: number): Promise<Article> {
+    try {
+      return await this.articleService.likeArticle(idArticle);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        // Gérer l'erreur
+      }
+      throw error;
+    }
+  -----------------------------------------
+  @Get(':id/likes')
+  async getLikesCount(@Param('id') idArticle: number): Promise<any> {
+    try {
+      const likesCount = await this.articleService.getLikesCount(idArticle);
+      return { likesCount };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        return { message: error.message };
+      }
+      throw error;
+    }
+  }
+  }
+-------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------COMMENTAIRE---------------------------------------------
+-------------------------------------ENTITE----------------------------------------------
+export class Commentaire {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  contenu: string;
+
+  @ManyToOne(() => Article, (article) => article.commentaires)
+  article: Article;
+
+  @ManyToOne(() => Visiteur, (visiteur) => visiteur.commentaires)
+  visiteur: Visiteur;
+}
+-------------------------------------SERVICE----------------------------------------------
+@Injectable()
+export class CommentaireService {
+  constructor(
+    @InjectRepository(Commentaire)
+    private readonly commentaireRepository: Repository<Commentaire>,
+    @InjectRepository(Article)
+    private readonly articleRepository: Repository<Article>,
+  ) {}
+
+  -------------------------------------------
+  async ajouterCommentaire(idArticle: number, idVisiteur: number, contenu: string): Promise<Commentaire> {
+    const article = await this.articleRepository.findOne(idArticle);
+    const visiteur = await this.visiteurRepository.findOne(idVisiteur);
+
+    if (!article || !visiteur) {
+      throw new NotFoundException('Article ou visiteur non trouvé');
+    }
+
+    const commentaire = this.commentaireRepository.create({ article, visiteur, contenu });
+    return this.commentaireRepository.save(commentaire);
+  }
+  -------------------------------------------
+  async getCommentairesByArticleId(idArticle: number): Promise<Commentaire[]> {
+    return this.commentaireRepository.find({
+      where: { article: { id: idArticle } }
+    });
+  }
+}
+---------------------------------CONTROLEUR----------------------------------------------
+@Controller('commentaire')
+export class CommentaireController {
+  constructor(private readonly commentaireService: CommentaireService) {}
+
+  -------------------------------------------
+  @Post(':idArticle/ajouter')
+  async ajouterCommentaire(
+    @Param('idArticle') idArticle: number,
+    @Body('idVisiteur') idVisiteur: number,
+    @Body('contenu') contenu: string,
+  ): Promise<Commentaire> {
+    try {
+      return await this.commentaireService.ajouterCommentaire(idArticle, idVisiteur, contenu);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        // Gérer l'erreur
+      }
+      throw error;
+    }
+  }
+  -------------------------------------------
+  @Get(':idArticle/liste')
+  async getCommentairesByArticleId(@Param('idArticle') idArticle: number): Promise<Commentaire[]> {
+    return await this.commentaireService.getCommentairesByArticleId(idArticle);
+  }
+}
+----------------------------------------------------------------------------------------------------------------------------------------
+-------------------------------------NOTE---------------------------------------------
+-------------------------------------ENTITE----------------------------------------------
+@Entity()
+export class Note {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  valeur: number;
+
+  @ManyToOne(() => Article, (article) => article.notes)
+  article: Article;
+
+  @ManyToOne(() => Visiteur, (visiteur) => visiteur.notes)
+  visiteur: Visiteur;
+}
+-------------------------------------SERVICE----------------------------------------------
+@Injectable()
+export class NoteService {
+  constructor(
+    @InjectRepository(Note) private readonly noteRepository: Repository<Note>,
+    @InjectRepository(Article) private readonly articleRepository: Repository<Article>,
+    @InjectRepository(Visiteur) private readonly visiteurRepository: Repository<Visiteur>,
+  ) {}
+
+
+  -------------------------------------------
+  async noterArticle(idVisiteur: number, idArticle: number, valeur: number): Promise<Article> {
+    const article = await this.articleRepository.findOne(idArticle);
+    const visiteur = await this.visiteurRepository.findOne(idVisiteur);
+
+    if (!article || !visiteur) {
+      throw new NotFoundException('Article ou visiteur non trouvé');
+    }
+
+    // Vérifiez si le visiteur a déjà noté cet article
+    const existingNote = await this.noteRepository.findOne({ article, visiteur });
+
+    if (existingNote) {
+      // Mettez à jour la note existante
+      existingNote.valeur = valeur;
+      await this.noteRepository.save(existingNote);
+    } else {
+      // Créez une nouvelle note
+      const newNote = this.noteRepository.create({ article, visiteur, valeur });
+      await this.noteRepository.save(newNote);
+    }
+
+    // Calculer la note générale de l'article
+    const notes = await this.noteRepository.find({ where: { article }, select: ['valeur'] });
+    const moyenne = notes.reduce((sum, note) => sum + note.valeur, 0) / notes.length;
+    article.noteGenerale = moyenne;
+
+    // Mettez à jour l'article avec la nouvelle note générale
+    return this.articleRepository.save(article);
+  }
+  -------------------------------------------
+  async getNotesByArticleId(idArticle: number): Promise<Note[]> {
+    return this.noteRepository.find({
+      where: { article: { id: idArticle } }
+    });
+  }
+}
+---------------------------------CONTROLEUR----------------------------------------------
+@Controller('note')
+export class NoteController {
+  constructor(private readonly noteService: NoteService) {}
+
+  @Post(':idVisiteur/:idArticle')
+  async noterArticle(
+    @Param('idVisiteur') idVisiteur: number,
+    @Param('idArticle') idArticle: number,
+    @Body('valeur') valeur: number,
+  ): Promise<any> {
+    try {
+      return await this.noteService.noterArticle(idVisiteur, idArticle, valeur);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        // Gérer l'erreur
+      }
+      throw error;
+    }
+  }
+  -------------------------------------------
+  @Get(':idArticle/liste')
+  async getNotesByArticleId(@Param('idArticle') idArticle: number): Promise<Note[]> {
+    return await this.noteService.getNotesByArticleId(idArticle);
+  }
+}
+
+*/
+
+import { ConflictException, Inject, Injectable, forwardRef } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Admin, Repository } from 'typeorm';
+import { CreateAdminDto } from './create-admin.dto';
+
+
+
+
+@Injectable()
+export class AdminService {
+        /*
+    constructor(@InjectRepository(Admin)private adminRepository: Repository<Admin>
+    @Inject(forwardRef(() => adminRepository))private adminRepository: Repository<Admin>
+    ) {}
+    
+      async create(createAdminDto: CreateAdminDto) {
+        try {
+            const admin = this.adminRepository.create();
+            admin.adminname= createAdminDto.adminname;
+
+            return await this.adminRepository.save(admin);
+        } catch (error) {
+            console.error("Error: ", error);
+            throw new ConflictException('Error creating admin');
+        }
+    }
+    async create(createAdminDto: CreateAdminDto) {
+        try {
+            const admin = this.adminRepository.create(createAdminDto);
+            return await this.adminRepository.save(admin);
+        } catch (error) {
+            console.error("Error: ",error); 
+        }
+    }
+ */
+}
